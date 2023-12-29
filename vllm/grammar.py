@@ -401,13 +401,9 @@ class NextTokenStrValidatorProcess(multiprocessing.Process):
     def run(self):
         while self.running:
             full_seq = self.task_queue.get()
-            if full_seq is None:
-                self.running = False
-                break
-            else:
-                results = self.get_valid_next_token_strs(full_seq)
-                self.result_queue.put(results)
-                self.result_queue.put(("DONE",))  # Sentinel to signal end of this task's results
+            results = self.get_valid_next_token_strs(full_seq)
+            self.result_queue.put(results)
+        del self
 
 
     def get_valid_next_token_strs(self, full_seq):
@@ -433,9 +429,6 @@ class NextTokenStrValidatorProcess(multiprocessing.Process):
         while not self.result_queue.empty():
             results.extend(self.result_queue.get_nowait())
         return results
-
-    def stop_process(self):
-        self.add_task(None)
 
 
 class NextTokenValidator:
@@ -477,11 +470,9 @@ class NextTokenValidator:
             for i, proc in enumerate(self.validator_processes):
                 if not results_received[i]:
                     try:
-                        result = proc.result_queue.get()
-                        if result == ("DONE",):
-                            results_received[i] = True
-                        else:
-                            yield from result
+                        result = proc.result_queue.get(timeout=0.00001)
+                        yield from result
+                        results_received[i] = True
                     except queue.Empty:
                         pass
 
@@ -493,11 +484,9 @@ class NextTokenValidator:
             yield from self.vocab[tok_str]
 
     def __del__(self):
-        """ Destructor to ensure processes are terminated gracefully """
+        """ Terminate all processes. """
         for proc in self.validator_processes:
-            proc.stop_process(None)
-        for proc in self.validator_processes:
-            proc.join()
+            proc.terminate()
 
 
 class GrammarLogitsProcessor(NextTokenValidator):
