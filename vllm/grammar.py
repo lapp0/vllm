@@ -2,6 +2,8 @@ import collections
 from copy import deepcopy, copy
 from dataclasses import dataclass, fields
 import functools
+import multiprocessing
+import queue
 import regex
 import torch
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
@@ -218,7 +220,6 @@ class IncrementalParserState:
         return f"{self.__class__.__name__}({self.interactive_parser.parser_state.state_stack})"
 
     @classmethod
-    @functools.lru_cache(1000)
     def from_grammar(cls, grammar: str, start: str):
         lark_parser = Lark(
             grammar,
@@ -387,6 +388,56 @@ class TokenVocab:
         return self.norm_vocab[tok_str]
 
 
+class NextTokenStrValidatorProcess(multiprocessing.Process):
+    def __init__(self, grammar, grammar_start, vocab_subset):
+        super().__init__()
+        self.root_parser = IncrementalParserState.from_grammar(
+            grammar, grammar_start)
+        self.vocab_subset = vocab_subset
+        self.task_queue = multiprocessing.Queue()
+        self.result_queue = multiprocessing.Queue()
+        self.running = True
+
+    def run(self):
+        while self.running:
+            full_seq = self.task_queue.get()
+            if full_seq is None:
+                self.running = False
+                break
+            else:
+                results = self.get_valid_next_token_strs(full_seq)
+                self.result_queue.put(results)
+                self.result_queue.put(("DONE",))  # Sentinel to signal end of this task's results
+
+
+    def get_valid_next_token_strs(self, full_seq):
+        result = self.root_parser[full_seq]
+        if result is None:
+            return []
+        partial_term, parser = result
+        valid_tokens = []
+        for token in self.vocab_subset:
+            if token is None:
+                if partial_term == "" and parser.is_valid_next_seq(token):
+                    valid_tokens.append(None)
+            else:
+                if parser.is_valid_next_seq(partial_term + token):
+                    valid_tokens.append(token)
+        return valid_tokens
+
+    def add_task(self, full_seq):
+        self.task_queue.put(full_seq)
+
+    def retrieve_results(self):
+        results = []
+        while not self.result_queue.empty():
+            results.extend(self.result_queue.get_nowait())
+        return results
+
+    def stop_process(self):
+        self.add_task(None)
+
+
 class NextTokenValidator:
 
     def __init__(
@@ -395,28 +446,44 @@ class NextTokenValidator:
         grammar: str,
         grammar_start: str = "start",
         legal_chars: Optional[set[str]] = None,
+        n_proc: int = 8
     ):
         self.tokenizer = tokenizer
         self.vocab = TokenVocab(tokenizer, legal_chars=legal_chars)
-        self.root_parser = IncrementalParserState.from_grammar(
-            grammar, grammar_start)
+
+        self.validator_processes = [
+            NextTokenStrValidatorProcess(grammar, grammar_start, vocab_subset)
+            for vocab_subset in self._get_vocab_split(self.vocab, n_proc)
+        ]
+
+        # Start each process
+        for proc in self.validator_processes:
+            proc.start()
+
+    @staticmethod
+    def _get_vocab_split(vocab, n_partitions):
+        # evenly distribute length
+        vocab = sorted(vocab, key=lambda x: len(x) if x else 0)
+        # round robin construction
+        return [vocab[i::n_partitions] for i in range(n_partitions)]
 
     def get_valid_next_token_strs(self, full_seq):
-        """
-        Generate valid token strings given the full sequence
-        """
+        for proc in self.validator_processes:
+            proc.add_task(full_seq)
 
-        result = self.root_parser[full_seq]
-        if result is None:
-            return []
-        partial_term, parser = result
-        for token in self.vocab:
-            if token is None:
-                if partial_term == "" and parser.is_valid_next_seq(token):
-                    yield None
-            else:
-                if parser.is_valid_next_seq(partial_term + token):
-                    yield token
+        results_received = [False] * len(self.validator_processes)
+
+        while not all(results_received):
+            for i, proc in enumerate(self.validator_processes):
+                if not results_received[i]:
+                    try:
+                        result = proc.result_queue.get()
+                        if result == ("DONE",):
+                            results_received[i] = True
+                        else:
+                            yield from result
+                    except queue.Empty:
+                        pass
 
     def get_valid_next_token_ids(self, full_seq):
         """
@@ -424,6 +491,13 @@ class NextTokenValidator:
         """
         for tok_str in self.get_valid_next_token_strs(full_seq):
             yield from self.vocab[tok_str]
+
+    def __del__(self):
+        """ Destructor to ensure processes are terminated gracefully """
+        for proc in self.validator_processes:
+            proc.stop_process(None)
+        for proc in self.validator_processes:
+            proc.join()
 
 
 class GrammarLogitsProcessor(NextTokenValidator):
