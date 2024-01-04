@@ -6,7 +6,7 @@
 </p>
 
 <h3 align="center">
-Easy, fast, and cheap LLM serving for everyone
+Easy, fast, and cheap LLM serving for everyone (with Grammar Support)
 </h3>
 
 <p align="center">
@@ -28,6 +28,9 @@ Easy, fast, and cheap LLM serving for everyone
 
 ---
 ## About
+This is a fork from [lapp0 Grammar implementation for vLLM](https://github.com/lapp0/vllm) with the latest vLLM v0.2.7. 
+CHeck out the [**Grammar Documentation**](docs/source/grammars/grammars.rst) to see how to use it.
+
 vLLM is a fast and easy-to-use library for LLM inference and serving.
 
 vLLM is fast with:
