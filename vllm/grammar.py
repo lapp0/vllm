@@ -16,6 +16,10 @@ from lark.parsers.lalr_parser_state import ParserState
 from lark.lexer import Token, Pattern, PatternStr, PatternRE
 
 
+
+
+
+
 #########################################################################
 # Fix Lark Interactive LALR Parser Speed Issue
 # https://github.com/lark-parser/lark/issues/1142#issuecomment-1863209804
@@ -367,8 +371,7 @@ class TokenVocab:
     """
 
     def __init__(self,
-                 tokenizer: Union[PreTrainedTokenizer,
-                                  PreTrainedTokenizerFast],
+                 tokenizer: PreTrainedTokenizerFast, #force use of fast tokenizer
                  legal_chars: Optional[Set[str]] = None):
 
         self.norm_vocab = collections.defaultdict(set)
