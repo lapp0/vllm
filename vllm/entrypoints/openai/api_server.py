@@ -439,6 +439,8 @@ async def create_chat_completion(request: ChatCompletionRequest,
         return await completion_full_generator()
 
 
+
+
 @app.post("/v1/completions")
 async def create_completion(request: CompletionRequest, raw_request: Request):
     """Completion API similar to OpenAI's API.
@@ -471,6 +473,7 @@ async def create_completion(request: CompletionRequest, raw_request: Request):
 
     model_name = request.model
     request_id = f"cmpl-{random_uuid()}"
+     
 
     use_token_ids = False
     if isinstance(request.prompt, list):
@@ -500,12 +503,41 @@ async def create_completion(request: CompletionRequest, raw_request: Request):
         return error_check_ret
 
     if request.grammar:
+
+        #https://github.com/lapp0/vllm/blob/grammar/docs/source/grammars/grammars.rst
+        static = False
+        if static:
+            allowed_chars = set(map(chr, range(256))) # restrict to utf-8
+        else:
+            #Restrict grammar characters to typable characters, characters in the grammar definition, and characters in the prompt.
+
+            keyboard_chars = ""
+            keyboard_chars += "abcdefghijklmnopqrstuvwxyz"
+            keyboard_chars += "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            keyboard_chars += "0123456789"
+            keyboard_chars += "`~!@#$%^&*()-_=+[{]}\\|;:'\",<.>/? "
+            keyboard_chars += "\t\n"
+            allowed_chars = set(keyboard_chars)
+        
+            assert isinstance(prompt, str)
+            assert isinstance(request.grammar, str)
+            for c in prompt:
+                allowed_chars.add(c)
+            for c in request.grammar:
+                allowed_chars.add(c)
+            #print(allowed_chars)
+            #print(len(allowed_chars))
+
+       
+        
+
+
         if engine.worker_use_ray:
             grammar_logits_processor = RayRemoteGrammarLogitsProcessor(
-                tokenizer=tokenizer, grammar=request.grammar)
+                tokenizer=tokenizer, grammar=request.grammar,  legal_chars=allowed_chars)
         else:
             grammar_logits_processor = GrammarLogitsProcessor(
-                tokenizer=tokenizer, grammar=request.grammar)
+                tokenizer=tokenizer, grammar=request.grammar, legal_chars=allowed_chars)
         logits_processors = [grammar_logits_processor]
     else:
         logits_processors = []
