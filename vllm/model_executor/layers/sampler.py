@@ -11,6 +11,11 @@ from vllm.sampling_params import SamplingParams, SamplingType
 from vllm.sequence import (PromptLogprobs, SampleLogprobs, SamplerOutput,
                            SequenceData, SequenceGroupOutput, SequenceOutput)
 
+import time
+logittime = 0
+execstart = 0
+prevtime = 0
+
 
 class Sampler(nn.Module):
     """Samples the next tokens from the model's outputs.
@@ -55,8 +60,27 @@ class Sampler(nn.Module):
         assert logits is not None
         _, vocab_size = logits.shape
 
+        global execstart
+        global logittime
+        global prevtime
+        if execstart == 0:
+            execstart = time.time()
+            prevtime = execstart
+
         # Apply logits processors (if any).
+        start = time.time()
         logits = _apply_logits_processors(logits, sampling_metadata)
+        stop = time.time()
+        logittime = logittime + stop - start
+        otherexectime = stop - execstart - logittime
+        if stop - prevtime > 1:
+            print("Logit processing time for current token: " + str(stop - start) + " seconds")
+            print("Total logit processing time: " + str(logittime) + " seconds")
+            print("Time elapsed since startup - logit processing time: " + str(stop - execstart) + " seconds")
+            print("Time elapsed since startup - logit processing time: " + str(otherexectime) + " seconds")
+            prevtime = stop
+        
+
 
         # Prepare sampling tensors with pinned memory to avoid blocking.
         (sampling_tensors, do_penalties, do_top_p_top_k,
